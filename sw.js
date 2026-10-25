@@ -1,7 +1,7 @@
 // Service worker: keeps a copy of every app file so Cyber Logbook opens and works with no internet.
 // When you change ANY app file, bump VERSION so phones and PCs pick up the new copy.
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0'; // 1.1.0: screenshots
 const CACHE = `cyber-logbook-${VERSION}`;
 
 const ASSETS = [
@@ -15,10 +15,14 @@ const ASSETS = [
   'js/browser.js',
   'js/db.js',
   'js/derive.js',
+  'js/github.js',
+  'js/images.js',
+  'js/imagesync.js',
   'js/markdown.js',
   'js/model.js',
   'js/pwa.js',
   'js/reset.js',
+  'js/shots.js',
   'js/stats.js',
   'js/store.js',
   'js/sync.js',

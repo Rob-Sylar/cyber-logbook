@@ -15,6 +15,7 @@ export function searchHaystack(e) {
   const parts = [e.room, e.platform, e.link, e.did, e.learned, e.explain, e.tags.join(' '), e.date];
   for (const c of e.commands) parts.push(c.cmd, c.what, c.example);
   for (const q of e.questions) parts.push(q.q, q.answer);
+  for (const s of e.shots) parts.push(s.caption);
   return parts.join('\n').toLowerCase();
 }
 

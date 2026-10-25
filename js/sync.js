@@ -4,9 +4,11 @@
 import * as db from './db.js';
 import * as store from './store.js';
 import { EPOCH, buildBackup, cleanIso, mergeEntryLists, nowISO, parseBackup } from './model.js';
-import { currentBackup, downloadJSON, stampedName } from './backup.js';
+import { downloadFullBackup } from './backup.js';
+import { deleteImages } from './images.js';
+import { SyncError, ghRequest } from './github.js';
 
-const API = 'https://api.github.com';
+export { SyncError };
 export const GIST_FILE = 'cyber-logbook.json';
 const GIST_DESC = 'Cyber Logbook sync data (managed by the Cyber Logbook app; please do not edit by hand)';
 const GIST_ID_RE = /^[0-9a-f]{20,64}$/i;
@@ -20,13 +22,6 @@ let running = null;
 let again = false;
 let timer = null;
 let paused = false;
-
-export class SyncError extends Error {
-  constructor(message, status = 0) {
-    super(message);
-    this.status = status;
-  }
-}
 
 function sanitize(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
@@ -77,45 +72,11 @@ export async function init() {
   setState(cfg.token ? 'idle' : 'off');
 }
 
-function describe(res, detail) {
-  const code = res.status;
-  if (code === 401) return 'GitHub rejected the token. It may have expired or been deleted. Make a new one and paste it in Settings → Sync.';
-  if (code === 403 || code === 429) {
-    if (res.headers.get('x-ratelimit-remaining') === '0') return 'GitHub says too many requests. Wait a few minutes, then sync again.';
-    return 'The token is not allowed to use Gists. When you make it, set Account permissions → Gists → Read and write.';
-  }
-  if (code === 404) return 'The sync Gist could not be found.';
-  if (code === 422) return `GitHub refused the update${detail ? ` (${detail})` : ''}.`;
-  if (code >= 500) return 'GitHub is having problems right now. Your data is safe on this device. Try again later.';
-  return `GitHub error ${code}${detail ? `: ${detail}` : ''}.`;
-}
+const gh = (token, path, opts = {}) => ghRequest(token, path, { ...opts, perm: 'gists' });
 
-async function gh(token, path, { method = 'GET', body } = {}) {
-  let res;
-  try {
-    res = await fetch(API + path, {
-      method,
-      cache: 'no-store',
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${token}`,
-        ...(body ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    throw new SyncError("Couldn't reach GitHub. Check your internet connection.");
-  }
-  if (res.ok) return res.status === 204 ? null : res.json();
-  let detail = '';
-  try {
-    const j = await res.json();
-    if (j && typeof j.message === 'string') detail = j.message.slice(0, 160);
-  } catch { /* no JSON body */ }
-  throw new SyncError(describe(res, detail), res.status);
-}
+// Screenshot sync reuses this device's text-sync token unless it has its own. Never shown or exported.
+export const currentToken = () => cfg.token;
+export const currentGistId = () => cfg.gistId;
 
 async function findGist(token) {
   const hits = [];
@@ -330,9 +291,11 @@ export async function resolveReset(choice) {
   const p = state.pendingReset;
   if (!p) return;
   if (choice === 'remove') {
-    downloadJSON(currentBackup(), stampedName('cyber-logbook-before-sync-wipe', 'json'));
-    const ids = store.allRecords().filter((e) => e.updatedAt <= p.resetAt).map((e) => e.id);
-    await store.hardDelete(ids, 'sync');
+    await downloadFullBackup('cyber-logbook-before-sync-wipe');
+    const old = store.allRecords().filter((e) => e.updatedAt <= p.resetAt);
+    const shotIds = old.flatMap((e) => [...(e.shots || []).map((s) => s.id), ...(e.deletedShots || [])]);
+    await store.hardDelete(old.map((e) => e.id), 'sync');
+    await deleteImages(shotIds).catch(() => {});
   }
   await saveCfg({ knownResetAt: p.resetAt });
   setState('idle', '', { pendingReset: null });

@@ -51,7 +51,12 @@ export async function save(raw) {
   const id = raw.id || newId();
   const prev = records.get(id);
   const updatedAt = nextStamp(prev);
-  const e = normalizeEntry({ ...raw, id, createdAt: prev?.createdAt || updatedAt, updatedAt, deleted: false });
+  // Screenshots that were on the previous version but aren't now are remembered as deleted,
+  // so the image is removed on every device (normalizeEntry drops any that are still attached).
+  const keptShots = new Set((raw.shots || []).map((s) => s && s.id));
+  const removedShots = prev && !prev.deleted ? prev.shots.map((s) => s.id).filter((sid) => !keptShots.has(sid)) : [];
+  const deletedShots = [...(prev?.deletedShots || []), ...(raw.deletedShots || []), ...removedShots];
+  const e = normalizeEntry({ ...raw, id, createdAt: prev?.createdAt || updatedAt, updatedAt, deleted: false, deletedShots });
   if (!e) throw new Error('That entry could not be saved.');
   await db.putMany('entries', [e]);
   records.set(e.id, e);

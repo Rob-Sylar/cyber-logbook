@@ -2,8 +2,10 @@
 
 import * as store from '../store.js';
 import * as db from '../db.js';
+import * as images from '../images.js';
 import { CONFIDENCE, MINUTE_PRESETS, PLATFORMS, cleanLine, isValidDateStr, isValidId, localDateISO, newId, normalizeEntry, nowISO, safeUrl } from '../model.js';
 import { isStandalone } from '../pwa.js';
+import { anyDialogOpen, imageFilesFrom, shotsEditor } from '../shots.js';
 import { chip, confirmPanel, debounce, emptyState, field, fmtClock, fmtDateTime, h, icon, lsGet, lsSet, setError, toast, uid } from '../ui.js';
 
 export const title = 'Log a session';
@@ -15,7 +17,7 @@ function blankDraft() {
   const last = lsGet('cl-last-platform');
   return {
     id: null, date: localDateISO(), minutes: 30, platform: PLATFORMS.includes(last) ? last : '', room: '', link: '', tags: [],
-    did: '', learned: '', explain: '', commands: [], questions: [], confidence: null, flag: '', quick: lsGet('cl-quick') === '1',
+    did: '', learned: '', explain: '', commands: [], shots: [], questions: [], confidence: null, flag: '', quick: lsGet('cl-quick') === '1',
   };
 }
 
@@ -23,9 +25,16 @@ function draftFromEntry(e) {
   return {
     id: e.id, date: e.date, minutes: e.minutes, platform: e.platform, room: e.room, link: e.link, tags: [...e.tags],
     did: e.did, learned: e.learned, explain: e.explain,
-    commands: e.commands.map((c) => ({ ...c })), questions: e.questions.map((q) => ({ ...q })),
+    commands: e.commands.map((c) => ({ ...c })), shots: e.shots.map((s) => ({ ...s })), questions: e.questions.map((q) => ({ ...q })),
     confidence: e.confidence, flag: e.flag, quick: false,
   };
+}
+
+// Images added to a draft that was then thrown away were never saved anywhere else.
+function discardDraftImages(draftShots, editing) {
+  const saved = new Set(editing ? editing.shots.map((s) => s.id) : []);
+  const unsaved = (draftShots || []).map((s) => s && s.id).filter((id) => isValidId(id) && !saved.has(id));
+  return images.deleteImages(unsaved).catch(() => {});
 }
 
 // Saved drafts get the same validation as imported data.
@@ -42,7 +51,7 @@ function draftFromStored(raw, base) {
   return d;
 }
 
-const hasContent = (d) => !!(d.room || d.link || d.did || d.learned || d.explain || d.flag || d.tags.length
+const hasContent = (d) => !!(d.room || d.link || d.did || d.learned || d.explain || d.flag || d.tags.length || d.shots.length
   || d.commands.some((c) => c.cmd || c.what || c.example) || d.questions.some((q) => q.q || q.answer));
 
 export async function render(page, param) {
@@ -62,6 +71,7 @@ export async function render(page, param) {
       restoredAt = stored.savedAt;
     } else if (stored) {
       await db.kvDel(draftKey); // an old edit draft for a version that has since changed
+      await discardDraftImages(stored.data && stored.data.shots, editing);
     }
   } catch { /* drafts are a convenience; carry on without */ }
 
@@ -104,6 +114,7 @@ export async function render(page, param) {
     fresh.addEventListener('click', async () => {
       persist.cancel();
       await db.kvDel(draftKey).catch(() => {});
+      await discardDraftImages(draft.shots, editing);
       rerender();
     });
     page.append(h('div', { class: 'notice notice-info', role: 'status' },
@@ -266,6 +277,15 @@ export async function render(page, param) {
     h('p', { class: 'hint' }, 'These build your personal cheat sheet.'),
     cmdList, addCmd);
 
+  // ---- screenshots
+  const pageLife = new AbortController();
+  const shotUi = shotsEditor({
+    shots: draft.shots,
+    onChange: () => { applyQuick(); changed(); },
+    savedIds: new Set(editing ? editing.shots.map((s) => s.id) : []),
+    signal: pageLife.signal,
+  });
+
   // ---- questions
   const qList = h('div', { class: 'repeat-list' });
   const addQ = h('button', { type: 'button', class: 'btn btn-ghost btn-add' }, icon('plus'), 'Add a question');
@@ -342,10 +362,11 @@ export async function render(page, param) {
   const saveBtn = h('button', { type: 'submit', class: 'btn btn-primary btn-big' }, icon('check'), editing ? 'Save changes' : 'Save entry');
   const secondary = h('button', { type: 'button', class: 'btn btn-ghost' }, editing ? 'Cancel' : 'Clear form');
   const confirmSlot = h('div');
-  secondary.addEventListener('click', () => {
+  secondary.addEventListener('click', async () => {
     if (editing) {
       persist.cancel();
-      db.kvDel(draftKey).catch(() => {});
+      await db.kvDel(draftKey).catch(() => {});
+      await discardDraftImages(draft.shots, editing);
       location.hash = `#/entry/${editing.id}`;
       return;
     }
@@ -357,6 +378,7 @@ export async function render(page, param) {
       onConfirm: async () => {
         persist.cancel();
         await db.kvDel(draftKey).catch(() => {});
+        await discardDraftImages(draft.shots, editing);
         rerender();
       },
       onCancel: () => { confirmSlot.replaceChildren(); secondary.focus(); },
@@ -373,6 +395,7 @@ export async function render(page, param) {
     learnedField,
     explainCard,
     cmdSection,
+    shotUi.el,
     qSection,
     confGroup,
     flagField,
@@ -384,6 +407,8 @@ export async function render(page, param) {
   function applyQuick() {
     form.classList.toggle('is-quick', !!draft.quick);
     form.querySelectorAll('[data-full]').forEach((el) => { el.hidden = !!draft.quick; });
+    // Quick log hides the Screenshots section until you paste or drop one in.
+    shotUi.el.hidden = !!draft.quick && draft.shots.length === 0;
   }
   applyQuick();
   quickToggle.addEventListener('change', () => {
@@ -454,10 +479,44 @@ export async function render(page, param) {
     }
   });
 
+  // Ctrl+V anywhere on the form adds a screenshot (Win+Shift+S puts one on the clipboard).
+  // Ordinary text pastes into a text box are left alone.
+  document.addEventListener('paste', (e) => {
+    if (anyDialogOpen()) return;
+    const files = imageFilesFrom(e.clipboardData);
+    if (!files.length) return;
+    const t = e.target;
+    const inTextBox = t instanceof HTMLElement && t.matches('input, textarea, [contenteditable]');
+    if (inTextBox && e.clipboardData.types.includes('text/plain')) return;
+    e.preventDefault();
+    shotUi.el.hidden = false;
+    shotUi.addFiles(files);
+  }, { signal: pageLife.signal });
+  // Image files dropped anywhere on the page go to Screenshots (instead of the browser opening them).
+  const hasFiles = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  document.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, { signal: pageLife.signal });
+  document.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (anyDialogOpen()) return;
+    const files = imageFilesFrom(e.dataTransfer);
+    if (!files.length) {
+      toast('Only image files can be added as screenshots.', { type: 'error' });
+      return;
+    }
+    shotUi.el.hidden = false;
+    shotUi.addFiles(files);
+  }, { signal: pageLife.signal });
+
   const onHide = () => { if (document.visibilityState === 'hidden') persist.flush(); };
   document.addEventListener('visibilitychange', onHide);
   return () => {
     document.removeEventListener('visibilitychange', onHide);
+    pageLife.abort();
     persist.flush();
   };
 }

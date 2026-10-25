@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
+import { startStaticServer } from '../tools/static-server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -47,6 +48,39 @@ test('every app file is listed in the service worker cache', async () => {
   const onDisk = ['index.html', 'manifest.webmanifest', ...(await walk('js')), ...(await walk('css')), ...(await walk('vendor')), ...(await walk('icons'))];
   for (const f of onDisk) expect(listed.has(f), `${f} must be in sw.js ASSETS`).toBe(true);
   for (const f of listed) await expect(fs.access(path.join(ROOT, f)), `${f} listed in sw.js must exist`).resolves.toBeUndefined();
+});
+
+test('publishing a new version shows "New version available" and updating keeps your data', async ({}, info) => {
+  // Its own little web server, so it can "publish" a new sw.js without affecting other tests.
+  let published = false;
+  const site = await startStaticServer({
+    transform: (rel, body) => (published && rel === '/sw.js' ? Buffer.from(body.toString('utf8').replace(/const VERSION = '([^']+)'/, "const VERSION = '$1-next'")) : body),
+  });
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cyber-logbook-update-'));
+  const ctx = await chromium.launchPersistentContext(dir, { ...(info.project.use.launchOptions || {}), baseURL: `http://localhost:${site.port}/` });
+  try {
+    const page = await ctx.newPage();
+    await page.goto('./#/journal');
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+    await page.evaluate(async () => (await import('./js/store.js')).save({ platform: 'Bandit', room: 'Saved before the update', minutes: 20, learned: 'x' }));
+
+    // "Publish" a new version: same app, bumped VERSION in sw.js. Coming back to the app checks for it.
+    published = true;
+    await page.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
+    const banner = page.getByRole('region', { name: 'Update available' });
+    await expect(banner).toBeVisible({ timeout: 15_000 });
+    await expect(banner).toContainText('New version available');
+    await banner.getByRole('button', { name: 'Tap to update' }).click();
+    await page.waitForEvent('load');
+    await expect.poll(() => page.evaluate(async () => (await caches.keys()).some((k) => k.endsWith('-next')))).toBe(true);
+    await expect(page.locator('.entry-card')).toContainText('Saved before the update');
+  } finally {
+    await ctx.close();
+    await site.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('Chrome says it is installable, and it works with no network', async ({}, info) => {

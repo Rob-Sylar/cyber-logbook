@@ -21,7 +21,8 @@ function fence(text, lang = '') {
 const quoteBlock = (text) => text.split('\n').map((l) => (l ? `> ${l}` : '>')).join('\n');
 const oneLine = (s) => s.replace(/\s*\n\s*/g, ' ');
 
-export function entryToMarkdown(e, { includeFlags = false } = {}) {
+// shotFiles: Map of screenshot id -> file name inside attachments/ (images that exist on this device).
+export function entryToMarkdown(e, { includeFlags = false, shotFiles = null } = {}) {
   const fm = ['---', `date: ${e.date}`, `platform: ${yq(e.platform)}`, `room: ${yq(e.room)}`];
   if (e.link) fm.push(`link: ${yq(e.link)}`);
   const slugs = [...new Set(['cyber-logbook', ...e.tags.map(obsidianTag).filter(Boolean)])];
@@ -43,6 +44,15 @@ export function entryToMarkdown(e, { includeFlags = false } = {}) {
       if (c.what) row.push(`**What it does:** ${c.what}`);
       if (c.example) row.push(`**Example:**\n\n${fence(c.example, 'shell')}`);
       parts.push(row.join('\n\n'));
+    }
+    blocks.push(parts.join('\n\n'));
+  }
+  if (e.shots && e.shots.length && shotFiles) {
+    const parts = ['## Screenshots'];
+    for (const s of e.shots) {
+      const file = shotFiles.get(s.id);
+      const pic = file ? `![[attachments/${file}]]` : '*(This screenshot wasn\'t on the device that made this export.)*';
+      parts.push(s.caption ? `${pic}\n*${oneLine(s.caption).replace(/\*/g, '\\*')}*` : pic);
     }
     blocks.push(parts.join('\n\n'));
   }

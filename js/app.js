@@ -2,6 +2,8 @@
 
 import * as store from './store.js';
 import * as sync from './sync.js';
+import * as imagesync from './imagesync.js';
+import { gcLocal } from './images.js';
 import { initPWA } from './pwa.js';
 import { applyTheme, toggleTheme } from './theme.js';
 import { h, hydrateIcons, icon, relTime, setIcon, toast } from './ui.js';
@@ -136,6 +138,16 @@ function updateSyncButton(st = sync.getState()) {
   else if (st.status === 'error') { short = 'Sync error'; more = `${st.message} Open sync settings`; }
   else if (st.status === 'decision') { short = 'Sync needs you'; more = 'See the message at the top of the page'; }
   else { short = st.lastSyncAt ? `Synced ${relTime(st.lastSyncAt)}` : 'Not synced yet'; more = 'Sync now'; }
+  // Screenshots sync in the background after the text; show their progress while that happens.
+  const img = imagesync.getState();
+  if ((st.status === 'ok' || st.status === 'idle') && img.status === 'working') {
+    short = img.total ? `Screenshots ${img.done}/${img.total}` : 'Checking screenshots';
+    more = 'Syncing screenshots in the background';
+    setIcon(btn, 'sync');
+    btn.classList.add('is-syncing');
+  } else if ((st.status === 'ok' || st.status === 'idle') && img.status === 'error') {
+    more = `${more}. Screenshot sync: ${img.message}`;
+  }
   const label = more ? `${short}. ${more}` : short;
   btn.setAttribute('aria-label', label);
   btn.title = label;
@@ -176,11 +188,14 @@ function renderBanners() {
         h('div', { class: 'btn-row' }, keepBtn, removeBtn))));
   }
   if (updateAccept) {
-    const btn = h('button', { type: 'button', class: 'btn btn-primary btn-small' }, 'Reload now');
-    btn.addEventListener('click', () => updateAccept());
+    const btn = h('button', { type: 'button', class: 'btn btn-primary btn-small' }, 'Tap to update');
+    btn.addEventListener('click', () => { btn.disabled = true; updateAccept(); });
     banners.append(h('section', { class: 'banner', 'aria-label': 'Update available' },
       icon('download'),
-      h('div', { class: 'banner-body' }, h('p', null, 'A new version of Cyber Logbook is ready.'), h('div', { class: 'btn-row' }, btn))));
+      h('div', { class: 'banner-body' },
+        h('p', { class: 'banner-title' }, 'New version available'),
+        h('p', null, 'Your entries are safe. Updating just reloads the app.'),
+        h('div', { class: 'btn-row' }, btn))));
   }
 }
 
@@ -210,6 +225,7 @@ async function boot() {
   try {
     await store.init();
     await sync.init();
+    await imagesync.init();
   } catch (err) {
     showFatal(err);
     return;
@@ -224,10 +240,15 @@ async function boot() {
   sync.onChange((st) => {
     updateSyncButton(st);
     renderBanners();
+    if (st.status === 'ok') imagesync.schedule(300); // images follow once the text is in
   });
+  imagesync.onChange(() => updateSyncButton());
 
   window.addEventListener('hashchange', () => renderRoute());
-  window.addEventListener('online', () => { if (sync.autoEnabled()) sync.syncNow(); });
+  window.addEventListener('online', () => {
+    if (sync.autoEnabled()) sync.syncNow();
+    if (imagesync.configured()) imagesync.schedule(2000);
+  });
   window.addEventListener('offline', () => { if (sync.getState().connected) updateSyncButton({ ...sync.getState(), status: 'offline' }); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || !sync.autoEnabled()) return;
@@ -243,6 +264,10 @@ async function boot() {
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if (sync.autoEnabled()) sync.syncNow();
+  else if (imagesync.configured()) imagesync.schedule(3000);
+  // Free the space of screenshots deleted more than a couple of minutes ago (kept briefly for Undo).
+  setTimeout(() => gcLocal().catch(() => {}), 5000);
+  setInterval(() => gcLocal().catch(() => {}), 60_000);
 }
 
 boot();

@@ -1,7 +1,7 @@
 // Two separate browser profiles (separate storage, like a PC and a phone) syncing through one Gist.
 // GitHub's API is replaced by an in-memory fake, so no real account or token is needed.
 import { test, expect } from '@playwright/test';
-import { fakeGitHub } from './helpers.mjs';
+import { fakeGitHub, readBackupZip, pasteImage, imageCount } from './helpers.mjs';
 import { BASE_URL } from '../base-url.mjs';
 
 const TOKEN_A = `github_pat_${'A1'.repeat(41)}`;
@@ -140,8 +140,8 @@ test('wiping the synced copy: backups first, the other device asks, and undo wor
   await A.page.getByLabel('Type RESET to confirm').fill('reset');
   await expect(go).toBeEnabled();
   const [backupDl] = await Promise.all([A.page.waitForEvent('download'), go.click()]);
-  expect(backupDl.suggestedFilename()).toMatch(/^cyber-logbook-before-reset-.*\.json$/);
-  const saved = JSON.parse(await (await import('node:fs/promises')).readFile(await backupDl.path(), 'utf8'));
+  expect(backupDl.suggestedFilename()).toMatch(/^cyber-logbook-before-reset-.*\.zip$/);
+  const { json: saved } = await readBackupZip(backupDl);
   expect(saved.entries.map((e) => e.room).sort()).toEqual(['PC note', 'Phone note']);
   await expect(A.page.getByText('This device has been reset.')).toBeVisible();
   expect(await rooms(A.page)).toEqual([]);
@@ -191,6 +191,112 @@ test('the other device can also choose to remove its old entries (backup first)'
   expect(dl.suggestedFilename()).toMatch(/^cyber-logbook-before-sync-wipe-/);
   await expect.poll(() => rooms(B.page)).toEqual([]);
   await expect.poll(() => status(B.page)).toBe('ok');
+  expect([...A.page.problems, ...B.page.problems]).toEqual([]);
+  await A.ctx.close();
+  await B.ctx.close();
+});
+
+// ---- Screenshots ---------------------------------------------------------------------------------
+const imageIds = (page) => page.evaluate(async () => (await (await import('./js/images.js')).imageIds()).sort());
+const imageState = (page) => page.evaluate(async () => (await import('./js/imagesync.js')).getState().status);
+const runImages = (page) => page.evaluate(async () => (await import('./js/imagesync.js')).run());
+
+async function connectImages(page, repo) {
+  await page.goto('./#/settings');
+  await page.getByRole('textbox', { name: 'Private repository' }).fill(repo);
+  await page.getByRole('button', { name: 'Connect screenshot sync' }).click();
+}
+
+async function logWithScreenshot(page, room) {
+  await page.goto('./#/log');
+  await page.getByRole('group', { name: 'Platform' }).locator('label.chip', { hasText: /^Homelab$/ }).click();
+  await page.getByLabel('Room, level or lab name').fill(room);
+  await pasteImage(page, { w: 1400, h: 800 });
+  await page.getByRole('dialog', { name: 'Check this screenshot' }).getByRole('button', { name: 'Save screenshot' }).click();
+  await page.getByRole('button', { name: 'Save entry' }).click();
+  await expect(page).toHaveURL(/#\/entry\//);
+  return call(page, (store, sync, [r]) => store.entries().find((e) => e.room === r).shots[0].id, room);
+}
+
+test('screenshots sync through a private repository, deletes follow, and an offline device catches up', async ({ browser }) => {
+  const gh = fakeGitHub({ validTokens: [TOKEN_A, TOKEN_B] });
+  const A = await device(browser, gh, 'PC');
+  const B = await device(browser, gh, 'Phone');
+  await connect(A.page, TOKEN_A);
+  await connect(B.page, TOKEN_B);
+  for (const d of [A, B]) await d.page.evaluate(async () => { (await import('./js/images.js')).tuning.writeGapMs = 0; });
+
+  // A public repository is refused: anyone could see the screenshots.
+  await connectImages(A.page, 'public-repo');
+  await expect(A.page.getByText(/public-repo is public, so anyone could see your screenshots/)).toBeVisible();
+
+  // Both devices connect to the private one (just the name: the owner is looked up).
+  for (const d of [A, B]) {
+    await connectImages(d.page, 'cyber-logbook-data');
+    await expect(d.page.getByText('Screenshots sync through me/cyber-logbook-data.')).toBeVisible();
+  }
+
+  // PC logs an entry with a screenshot: text goes to the Gist, then the image is uploaded once.
+  const id1 = await logWithScreenshot(A.page, 'Lab with picture');
+  await expect.poll(() => gh.repoImages(), { timeout: 15_000 }).toEqual([`images/${id1}.webp`]);
+  const uploaded = gh.repoFile(`images/${id1}.webp`).content;
+  const local = await A.page.evaluate(async (i) => (await (await import('./js/images.js')).getImage(i)).size, id1);
+  expect(uploaded.length).toBe(local);
+  expect(gh.remoteData().entries.find((e) => e.room === 'Lab with picture').shots[0].id).toBe(id1);
+  expect(JSON.stringify(gh.remoteData())).not.toContain('base64'); // no image data in the Gist
+
+  // Phone syncs: gets the entry, then downloads only the image it's missing.
+  await syncNow(B.page);
+  await expect.poll(() => imageIds(B.page), { timeout: 15_000 }).toEqual([id1]);
+  const puts = gh.calls.filter((c) => c.method === 'PUT').length;
+  await runImages(B.page);
+  expect(gh.calls.filter((c) => c.method === 'PUT').length, 'nothing re-uploaded').toBe(puts);
+  await B.page.goto(`./#/entry/${await call(B.page, (store) => store.entries()[0].id)}`);
+  await expect.poll(() => B.page.locator('.gallery img').evaluate((i) => i.naturalWidth)).toBe(1400);
+
+  // Phone deletes it: the PC's entry loses it at the next sync, and the file leaves the repository.
+  await B.page.getByRole('button', { name: /Open screenshot 1/ }).click();
+  await B.page.getByRole('button', { name: 'Delete this screenshot' }).click();
+  await B.page.getByRole('button', { name: 'Delete screenshot' }).click();
+  await syncNow(B.page);
+  await syncNow(A.page);
+  expect(await call(A.page, (store) => store.entries()[0].shots.length)).toBe(0);
+  for (const d of [A, B]) await d.page.evaluate(async () => { (await import('./js/images.js')).tuning.graceMs = 0; });
+  await runImages(A.page);
+  expect(gh.repoImages()).toEqual([]);
+  expect(await imageIds(A.page)).toEqual([]);
+  await runImages(B.page);
+  expect(await imageIds(B.page)).toEqual([]);
+
+  // Phone goes offline; PC adds another screenshot; the phone catches up when it's back online.
+  await B.ctx.setOffline(true);
+  await runImages(B.page);
+  expect(await imageState(B.page)).toBe('offline');
+  const id2 = await logWithScreenshot(A.page, 'Second lab');
+  await expect.poll(() => gh.repoImages(), { timeout: 15_000 }).toEqual([`images/${id2}.webp`]);
+  await B.ctx.setOffline(false); // fires "online": text sync, then screenshots
+  await expect.poll(() => imageIds(B.page), { timeout: 20_000 }).toEqual([id2]);
+  await B.page.goto('./#/settings');
+  await expect(B.page.locator('#s-imagesync')).toContainText('Screenshots are up to date.');
+
+  // Wiping the synced copy (Reset on the PC) also empties the screenshot repository.
+  await A.page.goto('./#/settings');
+  await A.page.getByRole('button', { name: 'Reset all local data…' }).click();
+  await A.page.getByLabel('Type RESET to confirm').fill('RESET');
+  await Promise.all([A.page.waitForEvent('download'), A.page.getByRole('button', { name: 'Back up, then wipe this device' }).click()]);
+  await Promise.all([A.page.waitForEvent('download'), A.page.getByRole('button', { name: 'Yes, wipe the synced copy too' }).click()]);
+  await expect(A.page.getByText(/including the screenshots in your repository/)).toBeVisible();
+  expect(gh.repoImages()).toEqual([]);
+  // The phone keeps its copy and re-uploads when asked to.
+  await call(B.page, (store, sync) => sync.syncNow());
+  await B.page.goto('./#/journal');
+  await B.page.getByRole('button', { name: 'Keep and re-upload' }).click();
+  await expect.poll(() => gh.repoImages(), { timeout: 15_000 }).toEqual([`images/${id2}.webp`]);
+
+  // Tokens never end up in the repository, the Gist or anything the app stores in plain sight.
+  for (const p of gh.repoImages()) expect(gh.repoFile(p).content.toString('latin1')).not.toContain('github_pat_');
+  expect(gh.calls.filter((c) => c.auth && c.auth !== `Bearer ${TOKEN_A}` && c.auth !== `Bearer ${TOKEN_B}`)).toEqual([]);
+  expect(await imageCount(B.page)).toBe(1);
   expect([...A.page.problems, ...B.page.problems]).toEqual([]);
   await A.ctx.close();
   await B.ctx.close();

@@ -3,6 +3,7 @@
 import * as store from '../store.js';
 import { confidenceLabel } from '../derive.js';
 import { entryToMarkdown } from '../markdown.js';
+import { shotsGallery } from '../shots.js';
 import { confirmPanel, confidenceDots, copyButton, copyText, emptyState, fmtDate, fmtDateTime, fmtMinutes, h, icon, toast } from '../ui.js';
 
 export const title = 'Entry';
@@ -44,6 +45,37 @@ export function render(page, id) {
         c.cmd ? h('div', { class: 'cmd-line' }, h('pre', { class: 'code' }, h('code', null, c.cmd)), copyButton(() => c.cmd, `Copy command: ${c.cmd.slice(0, 60)}`)) : null,
         c.what ? h('p', null, c.what) : null,
         c.example ? h('div', { class: 'cmd-example' }, h('span', { class: 'label-small' }, 'Example'), h('pre', { class: 'code' }, h('code', null, c.example))) : null)))));
+  }
+
+  const life = new AbortController();
+  if (e.shots.length) {
+    const redraw = () => window.dispatchEvent(new HashChangeEvent('hashchange'));
+    let deletedAny = false;
+    const onClose = () => { if (deletedAny) redraw(); };
+    const onDelete = async (shot) => {
+      const current = store.get(e.id);
+      if (!current) return;
+      const at = current.shots.findIndex((s) => s.id === shot.id);
+      await store.save({ ...current, shots: current.shots.filter((s) => s.id !== shot.id) });
+      deletedAny = true;
+      toast('Screenshot deleted', {
+        action: {
+          label: 'Undo',
+          fn: async () => {
+            const now = store.get(e.id);
+            if (!now) return;
+            const shots = [...now.shots];
+            shots.splice(Math.max(0, at), 0, shot);
+            await store.save({ ...now, shots });
+            toast('Screenshot restored', { type: 'success' });
+            redraw();
+          },
+        },
+      });
+    };
+    page.append(h('section', { class: 'card', 'aria-labelledby': 'shots-view' },
+      h('h2', { id: 'shots-view' }, icon('image'), `Screenshots (${e.shots.length})`),
+      shotsGallery(e.shots, { signal: life.signal, onDelete, onClose })));
   }
 
   if (e.questions.length) {
@@ -121,5 +153,5 @@ export function render(page, id) {
   });
   page.append(confirmSlot, h('div', { class: 'btn-row entry-actions' }, editBtn, shareBtn, deleteBtn));
   page.append(h('p', { class: 'muted small' }, `Logged ${fmtDateTime(e.createdAt)} · last changed ${fmtDateTime(e.updatedAt)}`));
-  return null;
+  return () => life.abort();
 }

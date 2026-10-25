@@ -1,7 +1,7 @@
-// Export (JSON + Markdown zip), import with merge-by-ID, bad-file handling, and local reset with undo.
+// Export (full backup zip + Markdown zip), import with merge-by-ID, bad-file handling, and local reset with undo.
 import JSZip from 'jszip';
 import fs from 'node:fs/promises';
-import { test, expect, open, seed, readDownload } from './helpers.mjs';
+import { test, expect, open, seed, readDownload, readBackupZip } from './helpers.mjs';
 import { sampleEntries } from '../fixtures/sample.mjs';
 
 async function download(page, buttonName) {
@@ -9,15 +9,16 @@ async function download(page, buttonName) {
   return dl;
 }
 
-test('JSON backup and Obsidian-ready Markdown export', async ({ page }) => {
+test('full backup (.zip) and Obsidian-ready Markdown export', async ({ page }) => {
   await open(page, 'settings');
   await seed(page, sampleEntries());
   await open(page, 'settings');
 
-  const jsonDl = await download(page, 'Export JSON backup');
-  expect(jsonDl.suggestedFilename()).toMatch(/^cyber-logbook-backup-\d{4}-\d{2}-\d{2}-\d{4}\.json$/);
-  const backup = JSON.parse((await readDownload(jsonDl)).toString('utf8'));
+  const backupDl = await download(page, 'Export full backup (.zip)');
+  expect(backupDl.suggestedFilename()).toMatch(/^cyber-logbook-backup-\d{4}-\d{2}-\d{2}-\d{4}\.zip$/);
+  const { json: backup } = await readBackupZip(backupDl);
   expect(backup.app).toBe('cyber-logbook');
+  expect(backup.schema).toBe(2);
   expect(backup.entries).toHaveLength(5);
 
   const zipDl = await download(page, 'Export Markdown (.zip)');
@@ -115,7 +116,8 @@ test('reset: in-page confirm, automatic backup first, then undo', async ({ page 
   await page.getByRole('button', { name: 'Reset all local data…' }).click();
   await page.getByLabel('Type RESET to confirm').fill('RESET');
   const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Back up, then wipe this device' }).click()]);
-  const saved = JSON.parse((await readDownload(dl)).toString('utf8'));
+  expect(dl.suggestedFilename()).toMatch(/^cyber-logbook-before-reset-.*\.zip$/);
+  const { json: saved } = await readBackupZip(dl);
   expect(saved.entries.filter((e) => !e.deleted)).toHaveLength(5);
   await expect(page.getByText('This device has been reset.')).toBeVisible();
   await expect(page.getByText('Also wipe the synced copy?')).toHaveCount(0); // sync wasn't set up

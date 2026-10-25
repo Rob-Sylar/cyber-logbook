@@ -1,8 +1,9 @@
 // A tiny promise wrapper around IndexedDB (no library needed).
-// Two stores: "entries" (keyed by entry.id) and "kv" (settings, drafts, sync config).
+// Stores: "entries" (keyed by entry.id), "kv" (settings, drafts, sync config)
+// and, since version 2, "images" (screenshot Blobs keyed by image id, kept apart from entry text).
 
 const DB_NAME = 'cyber-logbook';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 let dbPromise = null;
 
 function promisify(req) {
@@ -20,10 +21,12 @@ export function openDB() {
       return;
     }
     const req = indexedDB.open(DB_NAME, DB_VERSION);
+    // Upgrades only ever add stores, so entries saved by older versions carry over untouched.
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains('entries')) db.createObjectStore('entries', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+      if (!db.objectStoreNames.contains('images')) db.createObjectStore('images', { keyPath: 'id' });
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -56,6 +59,16 @@ export async function getAll(storeName) {
   return promisify(db.transaction(storeName).objectStore(storeName).getAll());
 }
 
+export async function getOne(storeName, key) {
+  const db = await openDB();
+  return promisify(db.transaction(storeName).objectStore(storeName).get(key));
+}
+
+export async function getAllKeys(storeName) {
+  const db = await openDB();
+  return promisify(db.transaction(storeName).objectStore(storeName).getAllKeys());
+}
+
 export function putMany(storeName, values) {
   return write([storeName], (tx) => {
     const os = tx.objectStore(storeName);
@@ -84,8 +97,9 @@ export function kvDel(key) {
 }
 
 export function clearAll() {
-  return write(['entries', 'kv'], (tx) => {
+  return write(['entries', 'kv', 'images'], (tx) => {
     tx.objectStore('entries').clear();
     tx.objectStore('kv').clear();
+    tx.objectStore('images').clear();
   });
 }

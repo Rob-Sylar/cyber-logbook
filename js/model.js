@@ -3,7 +3,7 @@
 // goes through normalizeEntry(), so bad data is dropped or repaired instead of crashing the app.
 
 export const APP_ID = 'cyber-logbook';
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2; // 2: entries can have screenshots (shots / deletedShots)
 export const EPOCH = '1970-01-01T00:00:00.000Z';
 
 export const PLATFORMS = ['TryHackMe', 'Bandit', 'CyLab Academy', 'Hack The Box', 'CyberDefenders', 'Blue Team Labs', 'Homelab', 'Other'];
@@ -17,7 +17,7 @@ export const CONFIDENCE = [
   { value: 5, label: 'Could teach it' },
 ];
 
-const LIMITS = { line: 300, url: 2048, text: 50000, tag: 40, tags: 30, cmd: 5000, rows: 300, flag: 1000, entries: 100000 };
+const LIMITS = { line: 300, url: 2048, text: 50000, tag: 40, tags: 30, cmd: 5000, rows: 300, flag: 1000, entries: 100000, shots: 100, caption: 500, deletedShots: 5000 };
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const CONTROL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
@@ -130,6 +130,39 @@ function toInt(v) {
   return Math.round(Number(v));
 }
 
+const clampInt = (v, max) => {
+  const n = toInt(v);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 0), max) : 0;
+};
+
+// Screenshot references kept on the entry. The image bytes live in the separate "images" store.
+function normalizeShots(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== 'object' || !isValidId(raw.id) || seen.has(raw.id)) continue;
+    seen.add(raw.id);
+    out.push({ id: raw.id, caption: cleanText(raw.caption, LIMITS.caption).trim(), w: clampInt(raw.w, 20000), h: clampInt(raw.h, 20000) });
+    if (out.length >= LIMITS.shots) break;
+  }
+  return out;
+}
+
+// IDs of screenshots removed from an entry, so other devices know to delete them too.
+function normalizeIdList(list, exclude = []) {
+  if (!Array.isArray(list)) return [];
+  const skip = new Set(exclude);
+  const out = [];
+  for (const id of list) {
+    if (!isValidId(id) || skip.has(id)) continue;
+    skip.add(id);
+    out.push(id);
+    if (out.length >= LIMITS.deletedShots) break;
+  }
+  return out;
+}
+
 // Returns a clean entry (fixed key order, so JSON comparisons are stable) or null if unusable.
 export function normalizeEntry(raw, { assignId = false } = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -140,11 +173,12 @@ export function normalizeEntry(raw, { assignId = false } = {}) {
   }
   const createdAt = cleanIso(raw.createdAt) || cleanIso(raw.updatedAt) || EPOCH;
   const updatedAt = cleanIso(raw.updatedAt) || createdAt;
-  if (raw.deleted === true) return { id, deleted: true, createdAt, updatedAt };
+  if (raw.deleted === true) return { id, deleted: true, createdAt, updatedAt, deletedShots: normalizeIdList(raw.deletedShots) };
 
   const minutes = toInt(raw.minutes);
   const confidence = toInt(raw.confidence);
   const fallbackDate = localDateISO(createdAt === EPOCH ? new Date() : new Date(createdAt));
+  const shots = normalizeShots(raw.shots);
   return {
     id,
     createdAt,
@@ -164,6 +198,7 @@ export function normalizeEntry(raw, { assignId = false } = {}) {
       (c) => ({ cmd: cleanText(c.cmd, LIMITS.cmd).trim(), what: cleanText(c.what, LIMITS.cmd).trim(), example: cleanText(c.example, LIMITS.cmd).trim() }),
       (r) => r.cmd || r.what || r.example,
     ),
+    shots,
     questions: normalizeRows(
       raw.questions,
       (q) => ({ q: cleanText(q.q, LIMITS.cmd).trim(), solved: q.solved === true, answer: cleanText(q.answer, LIMITS.text).trim() }),
@@ -172,11 +207,14 @@ export function normalizeEntry(raw, { assignId = false } = {}) {
     confidence: confidence >= 1 && confidence <= 5 ? confidence : null,
     flag: cleanText(raw.flag, LIMITS.flag).trim(),
     quick: raw.quick === true,
+    deletedShots: normalizeIdList(raw.deletedShots, shots.map((s) => s.id)),
   };
 }
 
+// A deleted entry remembers its screenshots so every device can delete the images too.
 export function tombstone(entry, at = nowISO()) {
-  return { id: entry.id, deleted: true, createdAt: entry.createdAt || at, updatedAt: at };
+  const deletedShots = normalizeIdList([...(entry.deletedShots || []), ...(entry.shots || []).map((s) => s.id)]);
+  return { id: entry.id, deleted: true, createdAt: entry.createdAt || at, updatedAt: at, deletedShots };
 }
 
 // ---- Merge by entry ID ------------------------------------------------------------------

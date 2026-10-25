@@ -9,14 +9,15 @@ export const title = 'Journal';
 export const wide = true;
 
 // Kept between visits while the app is open.
-const filters = { q: '', platform: '', tag: '', from: '', to: '', conf: '' };
+const filters = { q: '', platform: '', tag: '', from: '', to: '', conf: '', shots: false };
 let filtersOpen = false;
 
 function activeFilterCount() {
-  return ['platform', 'tag', 'from', 'to', 'conf'].filter((k) => filters[k]).length;
+  return ['platform', 'tag', 'from', 'to', 'conf', 'shots'].filter((k) => filters[k]).length;
 }
 
 function passes(e, terms) {
+  if (filters.shots && !e.shots.length) return false;
   if (filters.platform && e.platform !== filters.platform) return false;
   if (filters.tag && !e.tags.some((t) => t.toLowerCase() === filters.tag.toLowerCase())) return false;
   if (filters.from && e.date < filters.from) return false;
@@ -34,7 +35,10 @@ export function entryCard(e) {
       h('span', { class: 'pill' }, e.platform),
       h('time', { datetime: e.date }, fmtDate(e.date, { weekday: 'short', day: 'numeric', month: 'short' })),
       h('span', { class: 'muted' }, fmtMinutes(e.minutes)),
-      confidenceDots(e.confidence)),
+      confidenceDots(e.confidence),
+      e.shots.length ? h('span', { class: 'shot-count', title: `${e.shots.length} screenshot${e.shots.length === 1 ? '' : 's'}` },
+        h('span', { 'aria-hidden': 'true' }, `📷 ${e.shots.length}`),
+        h('span', { class: 'visually-hidden' }, `${e.shots.length} screenshot${e.shots.length === 1 ? '' : 's'}`)) : null),
     h('h3', { class: 'entry-card-title' }, e.room || 'Untitled session'),
     e.learned ? h('p', { class: 'entry-card-text' }, e.learned) : null,
     h('div', { class: 'entry-card-foot' },
@@ -71,11 +75,13 @@ export function render(page) {
   const confSel = select('j-conf', filters.conf, [['', 'Any confidence'], ['low', '1–2 (revisit)'], ...CONFIDENCE.map((c) => [String(c.value), `${c.value} – ${c.label}`]), ['none', 'Not rated']]);
   const from = h('input', { type: 'date', class: 'input', id: 'j-from', value: filters.from });
   const to = h('input', { type: 'date', class: 'input', id: 'j-to', value: filters.to });
+  const withShots = h('input', { type: 'checkbox', id: 'j-shots', checked: filters.shots });
   const clearBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-small' }, 'Clear filters');
 
   const panel = h('div', { class: 'filter-panel', id: 'j-filters', hidden: !filtersOpen },
     field('Platform', platformSel), field('Tag', tagSel), field('Confidence', confSel),
     field('From date', from), field('To date', to),
+    h('label', { class: 'check filter-check', for: 'j-shots' }, withShots, h('span', null, 'Only entries with screenshots')),
     h('div', { class: 'filter-actions' }, clearBtn));
 
   const summary = h('p', { class: 'muted summary', 'aria-live': 'polite' });
@@ -117,9 +123,11 @@ export function render(page) {
   bind(confSel, 'conf');
   bind(from, 'from');
   bind(to, 'to');
+  withShots.addEventListener('change', () => { filters.shots = withShots.checked; setFilterBtn(); update(); });
   clearBtn.addEventListener('click', () => {
-    Object.assign(filters, { platform: '', tag: '', from: '', to: '', conf: '' });
+    Object.assign(filters, { platform: '', tag: '', from: '', to: '', conf: '', shots: false });
     platformSel.value = tagSel.value = confSel.value = from.value = to.value = '';
+    withShots.checked = false;
     setFilterBtn();
     update();
   });
