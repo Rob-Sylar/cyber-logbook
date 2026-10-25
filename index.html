@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Cyber Logbook</title>
+  <meta name="description" content="A learning journal for teaching yourself cyber security. Works offline.">
+  <meta name="theme-color" id="theme-color" content="#0a0f1c">
+  <meta name="color-scheme" content="light dark">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="js/theme-boot.js"></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <a class="brand" href="#/log">
+      <img src="icons/icon.svg" alt="" width="30" height="30">
+      <span>Cyber Logbook</span>
+    </a>
+    <div class="topbar-actions">
+      <button id="sync-btn" class="icon-btn sync-btn" type="button" aria-label="Sync is off. Open sync settings">
+        <span data-icon="cloudOff"></span><span class="sync-text" aria-hidden="true"></span>
+      </button>
+      <a id="questions-link" class="icon-btn hide-wide" href="#/questions" aria-label="Questions">
+        <span data-icon="help"></span><span class="badge" hidden></span>
+      </a>
+      <button id="theme-btn" class="icon-btn" type="button" aria-label="Switch theme">
+        <span data-icon="moon"></span>
+      </button>
+      <a class="icon-btn hide-wide" href="#/settings" aria-label="Settings">
+        <span data-icon="settings"></span>
+      </a>
+    </div>
+  </header>
+
+  <nav class="nav" aria-label="Main">
+    <a href="#/log" data-route="log"><span data-icon="pen"></span><span class="nav-label">Log</span></a>
+    <a href="#/journal" data-route="journal"><span data-icon="book"></span><span class="nav-label">Journal</span></a>
+    <a href="#/cheats" data-route="cheats"><span data-icon="terminal"></span><span class="nav-label">Cheat sheet</span></a>
+    <a href="#/review" data-route="review"><span data-icon="cards"></span><span class="nav-label">Review</span></a>
+    <a href="#/stats" data-route="stats"><span data-icon="chart"></span><span class="nav-label">Stats</span></a>
+    <a href="#/questions" data-route="questions" class="nav-extra"><span data-icon="help"></span><span class="nav-label">Questions</span><span class="badge" hidden></span></a>
+    <a href="#/settings" data-route="settings" class="nav-extra"><span data-icon="settings"></span><span class="nav-label">Settings</span></a>
+    <a href="#/install" data-route="install" class="nav-extra"><span data-icon="install"></span><span class="nav-label">Install app</span></a>
+  </nav>
+
+  <div class="shell">
+    <div id="banners" class="banners"></div>
+    <main id="main" tabindex="-1">
+      <div class="page"><p class="muted loading">Loading your logbook…</p></div>
+    </main>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <noscript>
+    <div class="page"><p>Cyber Logbook needs JavaScript turned on.</p></div>
+  </noscript>
+</body>
+</html>

@@ -1,0 +1,31 @@
+{
+  "id": "./",
+  "name": "Cyber Logbook",
+  "short_name": "Cyber Log",
+  "description": "A learning journal for teaching yourself cyber security. Works offline, syncs free through your own GitHub Gist.",
+  "start_url": "./#/log",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0f1c",
+  "theme_color": "#0a0f1c",
+  "lang": "en-GB",
+  "dir": "ltr",
+  "categories": ["education", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "screenshots": [
+    { "src": "screenshots/narrow-log.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "Log a study session" },
+    { "src": "screenshots/narrow-journal.png", "sizes": "780x1688", "type": "image/png", "form_factor": "narrow", "label": "Your journal" },
+    { "src": "screenshots/wide-journal.png", "sizes": "1280x800", "type": "image/png", "form_factor": "wide", "label": "Your journal on a PC" }
+  ],
+  "shortcuts": [
+    { "name": "Log a session", "short_name": "Log", "url": "./#/log", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Review flashcards", "short_name": "Review", "url": "./#/review", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Cheat sheet", "short_name": "Cheats", "url": "./#/cheats", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "cyber-logbook-tests",
+  "private": true,
+  "description": "Playwright tests for Cyber Logbook. Not needed to run or deploy the app.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "icons": "node tools/make-icons.mjs",
+    "serve": "node tools/serve.mjs"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.64.1",
+    "jszip": "^3.10.2"
+  }
+}
